@@ -43,6 +43,14 @@ export default function GetStartedScreen() {
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
   const avatarRef = useRef<HTMLDivElement>(null);
+  const [savedItinerary, setSavedItinerary] = useState<{ location: string } | null>(null);
+
+  useEffect(() => {
+    const raw = localStorage.getItem("itinerary");
+    if (raw) {
+      try { setSavedItinerary(JSON.parse(raw)); } catch { /* ignore */ }
+    }
+  }, []);
 
   useEffect(() => {
     if (!avatarMenuOpen) return;
@@ -72,6 +80,31 @@ export default function GetStartedScreen() {
                   ? <img src={user.picture} alt="avatar" onClick={() => setAvatarMenuOpen(o => !o)} onError={() => setAvatarError(true)} style={{ width: 36, height: 36, borderRadius: "50%", cursor: "pointer", display: "block" }} />
                   : <M3IconBtn icon="account_circle" onClick={() => setAvatarMenuOpen(o => !o)} />
                 }
+                {savedItinerary && !avatarMenuOpen && (
+                  <div
+                    onClick={() => navigate("/your-trip")}
+                    style={{
+                      position: "absolute", top: "calc(100% + 8px)", right: 0,
+                      display: "flex", alignItems: "center", gap: 8,
+                      background: "var(--m3-secondary-container)", color: "var(--m3-on-secondary-container)",
+                      borderRadius: 999, padding: "8px 8px 8px 14px",
+                      fontSize: 13, fontWeight: 500, whiteSpace: "nowrap",
+                      boxShadow: "0 2px 10px rgba(0,0,0,0.15)", cursor: "pointer", zIndex: 100,
+                    }}
+                  >
+                    <Sym name="map" size={16} fill={1} />
+                    <div>
+                      <div style={{ fontSize: 10, opacity: 0.65, lineHeight: 1 }}>Unsaved itinerary</div>
+                      <div style={{ marginTop: 1 }}>{savedItinerary.location}</div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); localStorage.removeItem("itinerary"); setSavedItinerary(null); }}
+                      style={{ display: "flex", alignItems: "center", background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 4, borderRadius: 999 }}
+                    >
+                      <Sym name="close" size={16} />
+                    </button>
+                  </div>
+                )}
                 {avatarMenuOpen && (
                   <div style={{
                     position: "absolute",
