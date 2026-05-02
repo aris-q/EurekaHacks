@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth0 } from "@auth0/auth0-react";
 import { Sym, M3Button, M3IconBtn } from "../../components/M3";
@@ -39,6 +40,19 @@ const HOW_IT_WORKS = [
 export default function GetStartedScreen() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading, loginWithRedirect, logout, user } = useAuth0();
+  const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
+  const avatarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!avatarMenuOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (avatarRef.current && !avatarRef.current.contains(e.target as Node)) {
+        setAvatarMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [avatarMenuOpen]);
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "auto" }}>
@@ -52,10 +66,43 @@ export default function GetStartedScreen() {
           isAuthenticated ? (
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <M3Button variant="text" icon="luggage" onClick={() => navigate("/my-trips")}>My trips</M3Button>
-              {user?.picture
-                ? <img src={user.picture} alt="avatar" onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })} style={{ width: 36, height: 36, borderRadius: "50%", cursor: "pointer", marginRight: 8 }} />
-                : <M3IconBtn icon="logout" onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })} />
-              }
+              <div ref={avatarRef} style={{ position: "relative", marginRight: 8 }}>
+                {user?.picture
+                  ? <img src={user.picture} alt="avatar" onClick={() => setAvatarMenuOpen(o => !o)} style={{ width: 36, height: 36, borderRadius: "50%", cursor: "pointer", display: "block" }} />
+                  : <M3IconBtn icon="account_circle" onClick={() => setAvatarMenuOpen(o => !o)} />
+                }
+                {avatarMenuOpen && (
+                  <div style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    background: "var(--m3-surface-container)",
+                    borderRadius: "var(--m3-corner-md, 12px)",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+                    padding: "8px 0",
+                    minWidth: 160,
+                    zIndex: 100,
+                  }}>
+                    {user?.name && (
+                      <div style={{ padding: "8px 16px 4px", fontSize: 13, opacity: 0.6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {user.name}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => { setAvatarMenuOpen(false); logout({ logoutParams: { returnTo: window.location.origin } }); }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        width: "100%", padding: "10px 16px",
+                        background: "none", border: "none", cursor: "pointer",
+                        color: "var(--m3-on-surface)", fontSize: 14, textAlign: "left",
+                      }}
+                    >
+                      <Sym>logout</Sym>
+                      Sign out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <M3Button variant="text" icon="login" onClick={() => { console.log("auth state:", { isLoading, isAuthenticated }); loginWithRedirect({ authorizationParams: { prompt: "login" } }).catch(console.error); }} style={{ marginRight: 8 }}>Sign in</M3Button>
