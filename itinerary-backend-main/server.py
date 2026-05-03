@@ -140,27 +140,6 @@ def index():
     return jsonify("Hello world"), HTTP_OK
 
 
-# @app.route("/generate_itinerary", methods=["POST"])
-# def generate_itinerary():
-#     args_user_prompt = request.args.get("prompt")
-#     if not args_user_prompt:
-#         return jsonify({"error": "No prompt found"}), HTTP_BAD_REQUEST
-
-#     video_urls_param = request.args.get("video_urls", "")
-#     videos = [v for v in video_urls_param.split(",") if v.strip()]
-
-#     if len(videos) > 5:
-#         videos = random.sample(videos, 5)
-
-#     video_summary = "The user have not specified any videos."
-
-#     if videos:
-#         lines = []
-#         for i, url in enumerate(videos):
-#             lines.append(f"Video {i + 1}:\n" f"  URL: {url}")
-#         video_summary = "\n\n".join(lines)
-
-
 @app.route("/generate_itinerary", methods=["POST"])
 def generate_itinerary():
     try:
@@ -181,8 +160,6 @@ def generate_itinerary():
             for i, url in enumerate(videos):
                 lines.append(f"Video {i + 1}:\n  URL: {url}")
             video_summary = "\n\n".join(lines)
-
-        # 🔽 YOU DELETED EVERYTHING BELOW — THIS IS REQUIRED
 
         with open("./prompts/system_prompt_vid_analysis.txt", "r") as f:
             system_prompt = f.read()

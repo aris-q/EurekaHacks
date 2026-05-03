@@ -55,18 +55,18 @@ async function fetchShorts(location: string, page = 0, extra = ""): Promise<Shor
 
 
 const TAG_KEYWORDS: Partial<Record<ActivityTag, string[]>> = {
-  [ActivityTag.Sightseeing]: ["sightseeing", "landmark", "monument", "attractions", "tourist"],
-  [ActivityTag.Hiking]: ["hike", "hiking", "trail", "trek", "mountain"],
-  [ActivityTag.Dining]: ["food", "restaurant", "eat", "cuisine", "dining", "dish"],
-  [ActivityTag.Adventure]: ["adventure", "extreme", "thrill", "adrenaline", "outdoor"],
-  [ActivityTag.Relaxation]: ["relax", "peaceful", "calm", "tranquil", "retreat"],
-  [ActivityTag.Nightlife]: ["nightlife", "bar", "club", "night", "party"],
-  [ActivityTag.CulturalExperience]: ["culture", "cultural", "tradition", "local", "temple", "heritage"],
-  [ActivityTag.Camping]: ["camp", "camping", "outdoors", "wilderness", "tent"],
-  [ActivityTag.Photography]: ["photography", "photo", "instagram", "scenic", "viewpoint"],
-  [ActivityTag.Entertainment]: ["entertainment", "show", "concert", "performance", "theater"],
-  [ActivityTag.FamilyFun]: ["family", "kids", "family-friendly", "children", "playground"],
-  [ActivityTag.ThemePark]: ["theme park", "amusement", "rides", "disney", "universal"],
+  [ActivityTag.Sightseeing]: ["sightseeing", "landmark", "monument", "attractions", "tourist", "explore", "exploring", "tour", "tours", "viewpoint", "views", "scenery", "sights", "visit", "visiting", "must see", "guide"],
+  [ActivityTag.Hiking]: ["hike", "hiking", "trail", "trek", "trekking", "mountain", "mountains", "nature", "waterfall", "summit", "climb", "climbing", "walk", "walking", "forest", "wilderness"],
+  [ActivityTag.Dining]: ["food", "restaurant", "eat", "eating", "cuisine", "dining", "dish", "dishes", "meal", "street food", "street", "taste", "tasting", "snack", "cafe", "coffee", "ramen", "sushi", "bbq", "market"],
+  [ActivityTag.Adventure]: ["adventure", "extreme", "thrill", "adrenaline", "outdoor", "sport", "sports", "surf", "surfing", "dive", "diving", "bungee", "zipline", "kayak", "rafting", "sailing"],
+  [ActivityTag.Relaxation]: ["relax", "relaxing", "relaxation", "peaceful", "calm", "tranquil", "retreat", "spa", "beach", "sunset", "sunrise", "resort", "island", "chill", "chilling", "hammock"],
+  [ActivityTag.Nightlife]: ["nightlife", "bar", "bars", "club", "clubs", "night", "party", "parties", "rooftop", "cocktail", "pub", "disco", "drinks"],
+  [ActivityTag.CulturalExperience]: ["culture", "cultural", "tradition", "traditional", "local", "temple", "heritage", "history", "historical", "museum", "festival", "ceremony", "shrine", "mosque", "ancient", "geisha", "kimono"],
+  [ActivityTag.Camping]: ["camp", "camping", "outdoors", "wilderness", "tent", "glamping", "bonfire", "stargazing", "national park"],
+  [ActivityTag.Photography]: ["photography", "photo", "instagram", "instagrammable", "scenic", "viewpoint", "aesthetic", "hidden gem", "gems", "spots", "photo spots", "sunrise", "sunset"],
+  [ActivityTag.Entertainment]: ["entertainment", "show", "concert", "performance", "theater", "shopping", "mall", "arcade", "experience"],
+  [ActivityTag.FamilyFun]: ["family", "kids", "children", "playground", "zoo", "aquarium", "friendly", "family-friendly"],
+  [ActivityTag.ThemePark]: ["theme park", "amusement", "rides", "disney", "universal", "roller coaster"],
 };
 
 function spreadSimilar(videos: ShortVideo[]): ShortVideo[] {
@@ -89,6 +89,11 @@ function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
+}
+
+const KW_STOP = new Set(["a","an","the","in","at","of","to","and","for","with","my","your","this","is","on","from","that","its","are","but","not","have","been","will","what","how","when","where","about","more","some","than","they","them","their","top","new","old","get","got","big","one","two","ten","all","via","now","out","can","let","had","may","yet","ago","far","few","him","his","her","off","per","put","run","set","too","yes","did","day","way","use","try","see","our","who","why","best","must","visit","you","place","awesome","cool","nice"]);
+function extractKeywords(title: string): string[] {
+  return title.toLowerCase().split(/\W+/).filter((w) => w.length > 2 && !KW_STOP.has(w));
 }
 
 function inferTags(title: string): ActivityTag[] {
@@ -329,12 +334,16 @@ function SwipeStep({
   const [liked, setLiked] = useState<string[]>([]);
   const [animDir, setAnimDir] = useState<"left" | "right" | null>(null);
   const animTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const videoRefs = useRef<Map<string, HTMLVideoElement | null>>(new Map());
 
   const weights = useRef<Record<string, number>>(
     Object.fromEntries(ALL_TAGS.map((tag) => [tag, initialTags.includes(tag) ? 1.0 : 0.3])),
   );
+  const likedKeywords = useRef<Map<string, number>>(new Map());
+  const dislikedKeywords = useRef<Map<string, number>>(new Map());
+  const [topKeywords, setTopKeywords] = useState<{ liked: string[]; disliked: string[] }>({ liked: [], disliked: [] });
   const pageRef = useRef(Math.floor(Math.random() * 6));
+  const tagCycleRef = useRef(0);
   const fetching = useRef(false);
   const seenIds = useRef(new Set<string>());
   const streamUrlCache = useRef(new Map<string, string>());
@@ -348,15 +357,24 @@ function SwipeStep({
   };
 
   const getNextExtra = () => {
-    const candidates = Object.entries(weights.current).filter(([, w]) => w > 0.6).sort(([, a], [, b]) => b - a);
     const seasonTerm = season.toLowerCase();
-    if (candidates.length === 0) return [location, "vacation", seasonTerm].filter(Boolean).join(" ");
-    const total = candidates.reduce((sum, [, w]) => sum + w * w, 0);
-    let rand = Math.random() * total;
-    let chosen = candidates[0][0];
-    for (const [tag, w] of candidates) { rand -= w * w; if (rand <= 0) { chosen = tag; break; } }
-    const activity = TAG_SEARCH_TERMS[chosen as ActivityTag] ?? chosen.toLowerCase();
-    return [location, "vacation", seasonTerm, activity].filter(Boolean).join(" ");
+
+    // 40% of the time, use a liked keyword directly — location is sent separately so omit it here
+    const topLiked = [...likedKeywords.current.entries()].filter(([, c]) => c >= 1).sort((a, b) => b[1] - a[1]);
+    if (topLiked.length > 0 && Math.random() < 0.4) {
+      const pool = topLiked.slice(0, 3);
+      const total = pool.reduce((s, [, c]) => s + c, 0);
+      let rand = Math.random() * total;
+      let kw = pool[0][0];
+      for (const [w, c] of pool) { rand -= c; if (rand <= 0) { kw = w; break; } }
+      return [seasonTerm, kw].filter(Boolean).join(" ");
+    }
+
+    // Round-robin through all selected vibe tags so every tag gets equal search coverage
+    const tag = initialTags[tagCycleRef.current % initialTags.length];
+    tagCycleRef.current++;
+    const activity = TAG_SEARCH_TERMS[tag] ?? tag.toLowerCase();
+    return [seasonTerm, activity].filter(Boolean).join(" ");
   };
 
   const locationTerms = parseLocationTerms(location);
@@ -364,35 +382,55 @@ function SwipeStep({
   const filterRelevant = (items: ShortVideo[]): ShortVideo[] =>
     items.filter((v) => isLocationMatch(v.title, locationTerms) && !GENERIC_TITLE.test(v.title));
 
+  const scoreVideo = (video: ShortVideo): number => {
+    let score = 0;
+    for (const w of extractKeywords(video.title)) {
+      score += (likedKeywords.current.get(w) ?? 0) * 1.0;
+      score -= (dislikedKeywords.current.get(w) ?? 0) * 1.5;
+    }
+    return score;
+  };
+
+  const filterAndRank = (videos: ShortVideo[]): ShortVideo[] =>
+    videos.filter((v) => scoreVideo(v) > -2).sort((a, b) => scoreVideo(b) - scoreVideo(a));
+
   const fetchMore = async () => {
     if (fetching.current) return;
     fetching.current = true;
     setLoadingMore(true);
     try {
-      const extra = getNextExtra();
-      const items = await fetchShorts(location, pageRef.current, extra);
-      pageRef.current++;
-      const fresh = spreadSimilar(shuffle(filterRelevant(items.filter((v) => !seenIds.current.has(v.videoId)))));
-      fresh.forEach((v) => seenIds.current.add(v.videoId));
-      if (fresh.length > 0) setQueue((prev) => [...prev, ...fresh]);
-    } catch { /* silent */ } finally { fetching.current = false; setLoadingMore(false); }
+      // 3 sequential rounds with a yield between each so the video proxy can
+      // get requests through (Flask dev server is single-threaded)
+      for (let round = 0; round < 3; round++) {
+        const extra = getNextExtra();
+        try {
+          const items = await fetchShorts(location, pageRef.current++, extra);
+          const fresh = spreadSimilar(filterAndRank(shuffle(filterRelevant(items.filter((v) => !seenIds.current.has(v.videoId))))));
+          fresh.forEach((v) => seenIds.current.add(v.videoId));
+          if (fresh.length > 0) setQueue((prev) => [...prev, ...fresh]);
+        } catch { break; }
+        if (round < 2) await new Promise<void>((r) => setTimeout(r, 400));
+      }
+    } finally { fetching.current = false; setLoadingMore(false); }
   };
 
   useEffect(() => {
     let active = true;
     const startPage = pageRef.current;
-    const firstExtra = initialTags.length > 0
-      ? [location, season.toLowerCase(), TAG_SEARCH_TERMS[initialTags[0]] ?? initialTags[0].toLowerCase()].filter(Boolean).join(" ")
-      : [location, "vacation", season.toLowerCase()].join(" ");
+    // Location is sent as its own param — extra is activity/season terms only
+    const firstExtra = [
+      season.toLowerCase(),
+      ...initialTags.slice(0, 2).map((t) => TAG_SEARCH_TERMS[t] ?? t.toLowerCase()),
+    ].join(" ");
 
     (async () => {
       try {
         const items = await fetchShorts(location, startPage, firstExtra);
         if (!active) return;
         pageRef.current = startPage + 1;
-        const fresh = spreadSimilar(shuffle(filterRelevant(
+        const fresh = spreadSimilar(filterAndRank(shuffle(filterRelevant(
           items.filter((v) => !seenIds.current.has(v.videoId))
-        )));
+        ))));
         fresh.forEach((v) => seenIds.current.add(v.videoId));
         if (fresh.length === 0) { setError("No videos found for this location."); return; }
         setQueue(fresh);
@@ -405,6 +443,13 @@ function SwipeStep({
     return () => { active = false; };
   }, []);
 
+  // When a fetch ends with 0 fresh results and we're out of cards, retry immediately
+  useEffect(() => {
+    if (!loading && !loadingMore && !error && queue.length > 0 && index >= queue.length) {
+      fetchMore();
+    }
+  }, [loadingMore]);
+
   useEffect(() => {
     if (queue.length === 0) return;
     // Pre-fetch CDN URLs for current + 3 ahead so they're ready before the user swipes
@@ -412,22 +457,32 @@ function SwipeStep({
       const v = queue[index + ahead];
       if (v) prefetchStreamUrl(v.videoId);
     }
-    for (let ahead = 1; ahead <= 2; ahead++) {
-      const el = videoRefs.current[index + ahead];
+    // Pre-load next 3 videos: use cached CDN URL if ready, otherwise proxy.
+    // Calling load() on a hidden-but-visible element lets the browser buffer ahead.
+    for (let ahead = 1; ahead <= 3; ahead++) {
       const v = queue[index + ahead];
-      if (el && v && !el.src) el.src = `/api/proxy?v=${v.videoId}`;
+      if (v) {
+        const el = videoRefs.current.get(v.videoId);
+        if (el && !el.src) {
+          const cached = streamUrlCache.current.get(v.videoId);
+          el.src = cached ?? `/api/proxy?v=${v.videoId}`;
+          el.load();
+        }
+      }
     }
-    const currentEl = videoRefs.current[index];
+    const curr = queue[index];
+    const currentEl = curr ? videoRefs.current.get(curr.videoId) : null;
     if (currentEl) {
       if (!currentEl.src) {
         // Use pre-fetched CDN URL directly if available, avoids proxy redirect round-trip
-        const cached = streamUrlCache.current.get(queue[index].videoId);
-        currentEl.src = cached ?? `/api/proxy?v=${queue[index].videoId}`;
+        const cached = streamUrlCache.current.get(curr.videoId);
+        currentEl.src = cached ?? `/api/proxy?v=${curr.videoId}`;
       }
       currentEl.play().catch(() => {});
     }
-    if (index > 0) videoRefs.current[index - 1]?.pause();
-    if (queue.length - index <= 5) fetchMore();
+    const prevV = index > 0 ? queue[index - 1] : null;
+    if (prevV) videoRefs.current.get(prevV.videoId)?.pause();
+    if (queue.length - index <= 12) fetchMore();
   }, [index, queue]);
 
   const updateWeights = (video: ShortVideo, dir: "left" | "right") => {
@@ -436,13 +491,28 @@ function SwipeStep({
       const isDifferent = !initialTags.includes(tag);
       weights.current[tag] = dir === "right" ? Math.min(2.0, w + 0.3) : Math.max(0.0, w - (isDifferent ? 0.5 : 0.3));
     });
+    extractKeywords(video.title).forEach((word) => {
+      const map = dir === "right" ? likedKeywords.current : dislikedKeywords.current;
+      map.set(word, (map.get(word) ?? 0) + 1);
+    });
+  };
+
+  const refreshTopKeywords = () => {
+    const topLiked = [...likedKeywords.current.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([w]) => w);
+    const topDisliked = [...dislikedKeywords.current.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([w]) => w);
+    setTopKeywords({ liked: topLiked, disliked: topDisliked });
   };
 
   const swipe = (dir: "left" | "right") => {
     if (animTimeout.current || loading || queue.length === 0 || index >= queue.length) return;
     const current = queue[index];
     updateWeights(current, dir);
-    fetchMore();
+    refreshTopKeywords();
+    // Re-sort pending videos with the updated keyword scores so the best match is always next
+    setQueue((prev) => [
+      ...prev.slice(0, index + 1),
+      ...[...prev.slice(index + 1)].sort((a, b) => scoreVideo(b) - scoreVideo(a)),
+    ]);
     setAnimDir(dir);
     animTimeout.current = setTimeout(() => {
       const newLiked = dir === "right" ? [...liked, current.videoId] : liked;
@@ -523,12 +593,21 @@ function SwipeStep({
                   <span style={{ color: "var(--m3-on-surface-variant)", fontSize: 14 }}>Finding more videos…</span>
                 </div>
               ) : (
-                queue.map((_, i) => (
+                queue.map((v, i) => (
                   <video
-                    key={i}
-                    ref={(el) => { videoRefs.current[i] = el; }}
+                    key={v.videoId}
+                    ref={(el) => { videoRefs.current.set(v.videoId, el); }}
                     loop muted playsInline preload="auto"
-                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", display: i === index ? "block" : "none" }}
+                    style={{
+                      position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover",
+                      // visibility:hidden (not display:none) lets the browser buffer the video content.
+                      // Only suppress rendering entirely for videos we won't need soon.
+                      ...(i === index
+                        ? { zIndex: 1 }
+                        : (i > index && i <= index + 3)
+                        ? { visibility: "hidden" as const, zIndex: 0 }
+                        : { display: "none" as const }),
+                    }}
                   />
                 ))
               )}
@@ -537,16 +616,68 @@ function SwipeStep({
             {/* Swipe stamps */}
             {current && (
               <>
-                <div style={{ position: "absolute", top: 80, left: 24, padding: "8px 16px", borderRadius: 10, border: "4px solid #34d399", color: "#34d399", fontWeight: 700, fontSize: 22, transform: "rotate(-12deg)", opacity: animDir === "right" ? 1 : 0, transition: "opacity .15s" }}>LIKED</div>
-                <div style={{ position: "absolute", top: 80, right: 24, padding: "8px 16px", borderRadius: 10, border: "4px solid #f87171", color: "#f87171", fontWeight: 700, fontSize: 22, transform: "rotate(12deg)", opacity: animDir === "left" ? 1 : 0, transition: "opacity .15s" }}>SKIP</div>
+                <div style={{ position: "absolute", top: 80, left: 24, padding: "8px 16px", borderRadius: 10, border: "4px solid #34d399", color: "#34d399", fontWeight: 700, fontSize: 22, transform: "rotate(-12deg)", opacity: animDir === "right" ? 1 : 0, transition: "opacity .15s", zIndex: 3 }}>LIKED</div>
+                <div style={{ position: "absolute", top: 80, right: 24, padding: "8px 16px", borderRadius: 10, border: "4px solid #f87171", color: "#f87171", fontWeight: 700, fontSize: 22, transform: "rotate(12deg)", opacity: animDir === "left" ? 1 : 0, transition: "opacity .15s", zIndex: 3 }}>SKIP</div>
               </>
             )}
 
+            {/* Location warning — top of card when video may not match destination */}
+            {current && !loading && !error && (() => {
+              const lower = current.title.toLowerCase();
+              if (locationTerms.some((t) => lower.includes(t))) return null;
+              const dest = extractDestKey(current.title);
+              const isDifferentPlace = dest && !locationTerms.some((t) => dest.includes(t) || t.includes(dest));
+              const msg = isDifferentPlace ? `May be about ${toTitleCase(dest!)}` : "Location not confirmed";
+              return (
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "14px 14px 40px", background: "linear-gradient(to bottom, rgba(0,0,0,.65), transparent)", zIndex: 2 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 99, background: "rgba(251,191,36,.18)", border: "1px solid rgba(251,191,36,.45)", color: "#fbbf24" }}>
+                    <Sym name="warning" size={13} style={{ flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{msg}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Video info overlay */}
             {current && !loading && !error && (
-              <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "48px 16px 16px", background: "linear-gradient(to top, rgba(0,0,0,.7), transparent)", color: "white" }}>
-                <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>{current.uploader}</div>
-                <div style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const }}>{current.title}</div>
+              <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "64px 14px 14px", background: "linear-gradient(to top, rgba(0,0,0,.88) 0%, rgba(0,0,0,.4) 55%, transparent 100%)", color: "white", zIndex: 2 }}>
+                {/* Country / place chip + uploader */}
+                {(() => {
+                  const dest = extractDestKey(current.title);
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                      {dest && (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, padding: "2px 8px", borderRadius: 99, background: "rgba(163,230,53,.2)", border: "1px solid rgba(163,230,53,.45)", color: "#a3e635", fontWeight: 600 }}>
+                          <Sym name="location_on" size={12} style={{ flexShrink: 0 }} />
+                          {toTitleCase(dest)}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 11, opacity: 0.65 }}>{current.uploader}</span>
+                    </div>
+                  );
+                })()}
+                {/* Title */}
+                <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, marginBottom: 7 }}>
+                  {current.title}
+                </div>
+                {/* Activity tags — green when weight is high (liked vibe), red when weight is low (disliked) */}
+                {inferTags(current.title).length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {inferTags(current.title).map((tag) => {
+                      const w = weights.current[tag] ?? 0.3;
+                      const isLiked = w > 0.7;
+                      const isDisliked = w < 0.15;
+                      return (
+                        <span key={tag} style={{
+                          fontSize: 11, padding: "2px 8px", borderRadius: 99, fontWeight: 500,
+                          background: isLiked ? "rgba(52,211,153,.28)" : isDisliked ? "rgba(248,113,113,.28)" : "rgba(255,255,255,.12)",
+                          color: isLiked ? "#6ee7b7" : isDisliked ? "#fca5a5" : "rgba(255,255,255,.75)",
+                          border: `1px solid ${isLiked ? "rgba(52,211,153,.45)" : isDisliked ? "rgba(248,113,113,.45)" : "rgba(255,255,255,.18)"}`,
+                        }}>{tag}</span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -570,6 +701,36 @@ function SwipeStep({
                 <div className="display-font" style={{ fontSize: 24, fontWeight: 500 }}>{loading || loadingMore ? "…" : remaining}</div>
               </div>
             </div>
+          </div>
+
+          {/* Search tags */}
+          <div style={{ background: "var(--m3-surface-container)", borderRadius: 16, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* Constant vibe tags — always pinned to every query */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "var(--m3-on-surface-variant)", textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0 }}>Always searching</span>
+              {initialTags.map((tag) => (
+                <span key={tag} style={{ fontSize: 12, padding: "2px 10px", borderRadius: 99, background: "rgba(52,211,153,.25)", color: "#34d399", fontWeight: 600, border: "1px solid rgba(52,211,153,.45)" }}>
+                  {TAG_SEARCH_TERMS[tag] ?? tag.toLowerCase()}
+                </span>
+              ))}
+            </div>
+            {/* Dynamically learned liked keywords */}
+            {topKeywords.liked.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--m3-on-surface-variant)", textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0 }}>Showing more</span>
+                {topKeywords.liked.map((w) => (
+                  <span key={w} style={{ fontSize: 12, padding: "2px 10px", borderRadius: 99, background: "rgba(52,211,153,.18)", color: "#34d399", fontWeight: 500 }}>{w}</span>
+                ))}
+              </div>
+            )}
+            {topKeywords.disliked.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--m3-on-surface-variant)", textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0 }}>Filtering out</span>
+                {topKeywords.disliked.map((w) => (
+                  <span key={w} style={{ fontSize: 12, padding: "2px 10px", borderRadius: 99, background: "rgba(248,113,113,.18)", color: "#f87171", fontWeight: 500 }}>{w}</span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* FAB controls */}
