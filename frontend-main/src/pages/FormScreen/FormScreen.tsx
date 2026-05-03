@@ -41,6 +41,7 @@ type ShortVideo = {
   thumbnail: string;
   uploader: string;
   viewCount: number | null;
+  locationConfirmed?: boolean;
 };
 
 async function fetchShorts(location: string, page = 0, extra = ""): Promise<ShortVideo[]> {
@@ -352,7 +353,17 @@ function SwipeStep({
     if (streamUrlCache.current.has(videoId)) return;
     fetch(`/api/stream-url?v=${videoId}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => { if (data?.url) streamUrlCache.current.set(videoId, data.url); })
+      .then((data) => {
+        if (!data?.url) return;
+        streamUrlCache.current.set(videoId, data.url);
+        // If this video's element is already loaded via proxy, no need to swap.
+        // But if it hasn't started loading yet (no src), set the direct URL now.
+        const el = videoRefs.current.get(videoId);
+        if (el && !el.src) {
+          el.src = data.url;
+          el.load();
+        }
+      })
       .catch(() => {});
   };
 
@@ -379,8 +390,18 @@ function SwipeStep({
 
   const locationTerms = parseLocationTerms(location);
   const GENERIC_TITLE = /places (on earth|in the world|around the world|you (must|need to|should) visit)|top \d+.*(places|destinations|spots|countries)|most (beautiful|amazing|incredible|stunning|underrated).*(places|destinations|countries|spots)|best (places|destinations|spots) (to visit|in the world|on earth)|\d+ (places|destinations|countries|cities) (that|you|to)/i;
-  const filterRelevant = (items: ShortVideo[]): ShortVideo[] =>
-    items.filter((v) => isLocationMatch(v.title, locationTerms) && !GENERIC_TITLE.test(v.title));
+
+  // Filter out generic titles entirely, and hard-remove any video whose title
+  // mentions a known place that is NOT the user's destination.
+  const filterRelevant = (items: ShortVideo[]): ShortVideo[] => {
+    return items.filter((v) => {
+      if (GENERIC_TITLE.test(v.title)) return false;
+      // If the title explicitly names a different known place, drop it entirely
+      const dest = extractDestKey(v.title);
+      if (dest && !locationTerms.some((t) => dest.includes(t) || t.includes(dest))) return false;
+      return true;
+    });
+  };
 
   const scoreVideo = (video: ShortVideo): number => {
     let score = 0;
@@ -452,14 +473,16 @@ function SwipeStep({
 
   useEffect(() => {
     if (queue.length === 0) return;
-    // Pre-fetch CDN URLs for current + 3 ahead so they're ready before the user swipes
-    for (let ahead = 0; ahead <= 3; ahead++) {
+
+    // Only prefetch stream URLs for current + up to 20 ahead — no point resolving
+    // CDN URLs for videos the user is unlikely to reach soon.
+    const PREFETCH_AHEAD = 20;
+    for (let ahead = 0; ahead <= PREFETCH_AHEAD; ahead++) {
       const v = queue[index + ahead];
       if (v) prefetchStreamUrl(v.videoId);
     }
-    // Pre-load next 3 videos: use cached CDN URL if ready, otherwise proxy.
-    // Calling load() on a hidden-but-visible element lets the browser buffer ahead.
-    for (let ahead = 1; ahead <= 3; ahead++) {
+    // Pre-load the next 5 video elements so the browser buffers them.
+    for (let ahead = 1; ahead <= 5; ahead++) {
       const v = queue[index + ahead];
       if (v) {
         const el = videoRefs.current.get(v.videoId);
@@ -473,16 +496,45 @@ function SwipeStep({
     const curr = queue[index];
     const currentEl = curr ? videoRefs.current.get(curr.videoId) : null;
     if (currentEl) {
+      const playEl = (el: HTMLVideoElement) => {
+        const doPlay = () => el.play().catch(() => {});
+        if (el.readyState >= 3) {
+          doPlay();
+        } else {
+          el.addEventListener('canplay', doPlay, { once: true });
+        }
+      };
+
       if (!currentEl.src) {
-        // Use pre-fetched CDN URL directly if available, avoids proxy redirect round-trip
-        const cached = streamUrlCache.current.get(curr.videoId);
-        currentEl.src = cached ?? `/api/proxy?v=${curr.videoId}`;
+        // Fetch the direct CDN URL first — faster than going through the proxy
+        // redirect since the browser doesn't have to follow a 302.
+        fetch(`/api/stream-url?v=${curr.videoId}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => {
+            const url = data?.url ?? `/api/proxy?v=${curr.videoId}`;
+            if (!currentEl.src) {
+              // Still not set (user hasn't swiped away) — set and play
+              streamUrlCache.current.set(curr.videoId, url);
+              currentEl.src = url;
+              currentEl.load();
+              playEl(currentEl);
+            }
+          })
+          .catch(() => {
+            // Fallback to proxy if stream-url fails
+            if (!currentEl.src) {
+              currentEl.src = `/api/proxy?v=${curr.videoId}`;
+              currentEl.load();
+              playEl(currentEl);
+            }
+          });
+      } else {
+        playEl(currentEl);
       }
-      currentEl.play().catch(() => {});
     }
     const prevV = index > 0 ? queue[index - 1] : null;
     if (prevV) videoRefs.current.get(prevV.videoId)?.pause();
-    if (queue.length - index <= 12) fetchMore();
+    if (queue.length - index <= 20) fetchMore();
   }, [index, queue]);
 
   const updateWeights = (video: ShortVideo, dir: "left" | "right") => {
@@ -604,7 +656,7 @@ function SwipeStep({
                       // Only suppress rendering entirely for videos we won't need soon.
                       ...(i === index
                         ? { zIndex: 1 }
-                        : (i > index && i <= index + 3)
+                        : (i > index && i <= index + 5)
                         ? { visibility: "hidden" as const, zIndex: 0 }
                         : { display: "none" as const }),
                     }}
